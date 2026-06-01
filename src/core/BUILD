@@ -3174,6 +3174,7 @@ grpc_cc_library(
         "lib/event_engine/cf_engine/cfsocket_listener.h",
         "lib/event_engine/cf_engine/cfstream_endpoint.h",
         "lib/event_engine/cf_engine/cftype_unique_ref.h",
+        "lib/event_engine/cf_engine/dispatch_object_unique_ref.h",
         "lib/event_engine/cf_engine/dns_service_resolver.h",
     ],
     defines = select({

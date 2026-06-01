@@ -158,6 +158,8 @@ void CFStreamEndpointImpl::Connect(
 void CFStreamEndpointImpl::SetupStreams(
     absl::AnyInvocable<void(absl::Status)> on_connect) {
   CFStreamClientContext cf_context = {0, this, Retain, Release, nullptr};
+  // Note that CF*StreamSetClient calls the context `retain` on the context
+  // `info`. So we have retain cycles here. These are broken in `Shutdown()`.
   CFReadStreamSetClient(
       cf_read_stream_,
       kCFStreamEventOpenCompleted | kCFStreamEventHasBytesAvailable |
@@ -168,10 +170,12 @@ void CFStreamEndpointImpl::SetupStreams(
       kCFStreamEventOpenCompleted | kCFStreamEventCanAcceptBytes |
           kCFStreamEventErrorOccurred | kCFStreamEventEndEncountered,
       WriteCallback, &cf_context);
-  CFReadStreamSetDispatchQueue(cf_read_stream_,
-                               dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0));
-  CFWriteStreamSetDispatchQueue(
-      cf_write_stream_, dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0));
+  read_dispatch_queue_ =
+      dispatch_queue_create("io.grpc.read_stream", DISPATCH_QUEUE_SERIAL);
+  CFReadStreamSetDispatchQueue(cf_read_stream_, read_dispatch_queue_);
+  write_dispatch_queue_ =
+      dispatch_queue_create("io.grpc.write_stream", DISPATCH_QUEUE_SERIAL);
+  CFWriteStreamSetDispatchQueue(cf_write_stream_, write_dispatch_queue_);
 
   if (!CFReadStreamOpen(cf_read_stream_)) {
     auto status = CFErrorToStatus(CFReadStreamCopyError(cf_read_stream_));
@@ -305,15 +309,29 @@ void CFStreamEndpointImpl::Shutdown() {
 
   // Remove the callbacks, otherwise we have a leak due to the stream retaining
   // a pointer to the client context (which is this object).
-  CFReadStreamSetClient(cf_read_stream_, kCFStreamEventNone, nullptr, nullptr);
-  CFWriteStreamSetClient(cf_write_stream_, kCFStreamEventNone, nullptr,
-                         nullptr);
+  if (read_dispatch_queue_) {
+    // 1. Cut off future events immediately
+    CFReadStreamSetDispatchQueue(cf_read_stream_, nullptr);
 
-  CFReadStreamSetDispatchQueue(cf_read_stream_, nullptr);
-  CFWriteStreamSetDispatchQueue(cf_write_stream_, nullptr);
+    // 2. Clear the client and close the stream (guarantees drainage of
+    // existing events). Since read_event is already shutdown, the callbacks may
+    // be called, but they will do nothing.
+    dispatch_sync(read_dispatch_queue_, ^{
+      CFReadStreamSetClient(cf_read_stream_, kCFStreamEventNone, nullptr,
+                            nullptr);
+      CFReadStreamClose(cf_read_stream_);
+    });
+  }
 
-  CFReadStreamClose(cf_read_stream_);
-  CFWriteStreamClose(cf_write_stream_);
+  if (write_dispatch_queue_) {
+    // Similar logic as for `read_dispatch_queue_`.
+    CFWriteStreamSetDispatchQueue(cf_write_stream_, nullptr);
+    dispatch_sync(write_dispatch_queue_, ^{
+      CFWriteStreamSetClient(cf_write_stream_, kCFStreamEventNone, nullptr,
+                             nullptr);
+      CFWriteStreamClose(cf_write_stream_);
+    });
+  }
 }
 
 bool CFStreamEndpointImpl::Read(absl::AnyInvocable<void(absl::Status)> on_read,

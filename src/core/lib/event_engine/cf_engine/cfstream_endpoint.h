@@ -25,6 +25,7 @@
 #include "src/core/lib/address_utils/sockaddr_utils.h"
 #include "src/core/lib/event_engine/cf_engine/cf_engine.h"
 #include "src/core/lib/event_engine/cf_engine/cftype_unique_ref.h"
+#include "src/core/lib/event_engine/cf_engine/dispatch_object_unique_ref.h"
 #include "src/core/lib/event_engine/posix_engine/lockfree_event.h"
 #include "src/core/lib/event_engine/tcp_socket_utils.h"
 #include "src/core/util/host_port.h"
@@ -91,6 +92,9 @@ class CFStreamEndpointImpl
  private:
   CFTypeUniqueRef<CFReadStreamRef> cf_read_stream_;
   CFTypeUniqueRef<CFWriteStreamRef> cf_write_stream_;
+
+  DispatchObjectUniqueRef<dispatch_queue_t> read_dispatch_queue_;
+  DispatchObjectUniqueRef<dispatch_queue_t> write_dispatch_queue_;
 
   std::shared_ptr<CFEventEngine> engine_;
 
