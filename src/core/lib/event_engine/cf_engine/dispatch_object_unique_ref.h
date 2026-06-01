@@ -20,6 +20,7 @@
 #ifdef AVAILABLE_MAC_OS_X_VERSION_10_12_AND_LATER
 
 #include <dispatch/dispatch.h>
+
 #include <type_traits>
 
 namespace grpc_event_engine::experimental {
